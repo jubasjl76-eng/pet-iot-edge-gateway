@@ -10,7 +10,8 @@ services:
       - KENNEL_ID=${KENNEL_ID:-kennel-01}
       - MQTT_HOST=mosquitto
       - MQTT_PORT=1883
-      - API_URL=http://backend:3000
+      - LOCAL_BACKEND_URL=http://local-backend:3000
+      - CLOUD_BACKEND_URL=${CLOUD_BACKEND_URL:-https://api.petsmart.example.com}
       - API_KEY=${API_KEY:-smart-pet-api-key-2026}
       - SQLITE_PATH=/app/data/gateway.db
       - SYNC_INTERVAL=30000
@@ -21,6 +22,34 @@ services:
       - iot-network
     depends_on:
       - mosquitto
+      - local-backend
+
+  # Local Backend (Edge mode)
+  local-backend:
+    image: node:20-alpine
+    container_name: pet-local-backend
+    restart: unless-stopped
+    working_dir: /app
+    command: sh -c "npm run dev"
+    environment:
+      - PORT=3000
+      - BACKEND_MODE=edge
+      - CLOUD_BACKEND_URL=${CLOUD_BACKEND_URL:-https://api.petsmart.example.com}
+      - PG_HOST=postgres
+      - PG_DATABASE=smartpet_edge
+      - PG_USER=postgres
+      - PG_PASSWORD=postgres
+      - JWT_SECRET=dev-secret-key
+      - API_KEY=smart-pet-api-key-2026
+    volumes:
+      - ../smart-pet-backend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    networks:
+      - iot-network
+    depends_on:
+      - postgres
 
   mosquitto:
     image: eclipse-mosquitto:2
@@ -36,31 +65,16 @@ services:
     networks:
       - iot-network
 
-  backend:
-    image: node:20-alpine
-    container_name: pet-backend
+  postgres:
+    image: postgres:16-alpine
+    container_name: pet-edge-db
     restart: unless-stopped
-    working_dir: /app
-    command: sh -c "npm run dev"
     environment:
-      - NODE_ENV=development
-      - MONGODB_URI=mongodb://mongodb:27017/smart-pet
-      - JWT_SECRET=dev-secret-key
+      - POSTGRES_DB=smartpet_edge
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
     volumes:
-      - ./backend:/app
-    ports:
-      - "3000:3000"
-    networks:
-      - iot-network
-    depends_on:
-      - mongodb
-
-  mongodb:
-    image: mongo:7
-    container_name: pet-mongodb
-    restart: unless-stopped
-    volumes:
-      - ./mongodb/data:/data/db
+      - ./postgres/data:/var/lib/postgresql/data
     networks:
       - iot-network
 
