@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  gateway:
+    build: .
+    container_name: pet-iot-edge-gateway
+    restart: unless-stopped
+    environment:
+      - GATEWAY_ID=${GATEWAY_ID:-gateway-01}
+      - KENNEL_ID=${KENNEL_ID:-kennel-01}
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+      - API_URL=http://backend:3000
+      - API_KEY=${API_KEY:-smart-pet-api-key-2026}
+      - SQLITE_PATH=/app/data/gateway.db
+      - SYNC_INTERVAL=30000
+      - HEARTBEAT_INTERVAL=60000
+    volumes:
+      - ./data:/app/data
+    networks:
+      - iot-network
+    depends_on:
+      - mosquitto
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: pet-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/logs:/mosquitto/logs
+    networks:
+      - iot-network
+
+  backend:
+    image: node:20-alpine
+    container_name: pet-backend
+    restart: unless-stopped
+    working_dir: /app
+    command: sh -c "npm run dev"
+    environment:
+      - NODE_ENV=development
+      - MONGODB_URI=mongodb://mongodb:27017/smart-pet
+      - JWT_SECRET=dev-secret-key
+    volumes:
+      - ./backend:/app
+    ports:
+      - "3000:3000"
+    networks:
+      - iot-network
+    depends_on:
+      - mongodb
+
+  mongodb:
+    image: mongo:7
+    container_name: pet-mongodb
+    restart: unless-stopped
+    volumes:
+      - ./mongodb/data:/data/db
+    networks:
+      - iot-network
+
+networks:
+  iot-network:
+    driver: bridge

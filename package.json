@@ -1,0 +1,31 @@
+{
+  "name": "pet-iot-edge-gateway",
+  "version": "1.0.0",
+  "description": "Edge gateway for IoT devices - runs locally, syncs with cloud",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc",
+    "test": "vitest",
+    "docker:build": "docker build -t pet-iot-edge-gateway .",
+    "docker:run": "docker run -d -p 3004:3004 --network host pet-iot-edge-gateway"
+  },
+  "dependencies": {
+    "mqtt": "^5.10.0",
+    "better-sqlite3": "^11.8.1",
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.0",
+    "uuid": "^11.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.5.14",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.0.0"
+  }
+}
