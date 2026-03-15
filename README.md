@@ -2,6 +2,14 @@
 
 An edge gateway service that runs locally in a kennel or pet owner's network, acting as a bridge between IoT devices and the cloud backend.
 
+## Architecture Role
+
+```
+IoT Devices → Local MQTT → Edge Gateway → Backend API (sync)
+                                    ↓
+                              SQLite (offline queue)
+```
+
 ## Features
 
 - 📡 **Local MQTT Broker** - Devices connect to local MQTT
@@ -17,10 +25,46 @@ An edge gateway service that runs locally in a kennel or pet owner's network, ac
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
 │ IoT Devices │────▶│ Edge       │────▶│ Cloud       │
 │ (ESP32, etc)│     │ Gateway    │     │ Backend     │
-└─────────────┘     │ (MQTT +    │     │ (MongoDB)   │
+└─────────────┘     │ (MQTT +    │     │ (PostgreSQL)│
                     │  SQLite)   │     └─────────────┘
                     └─────────────┘
 ```
+
+## MQTT Topics
+
+### Subscribe (from devices)
+```
+kennel/{kennelId}/sensor/{deviceId}/temperature
+kennel/{kennelId}/sensor/{deviceId}/humidity
+kennel/{kennelId}/door/{deviceId}/status
+kennel/{kennelId}/feeder/{deviceId}/status
+kennel/{kennelId}/water/{deviceId}/status
+kennel/{kennelId}/camera/{deviceId}/status
+```
+
+### Publish (to devices)
+```
+kennel/{kennelId}/{deviceType}/{deviceId}/command
+```
+
+## QoS Levels
+
+- **QoS 1**: Sensor events (at least once delivery)
+- **QoS 2**: Commands (exactly once delivery)
+
+## Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| GATEWAY_ID | Unique gateway ID | auto-generated |
+| KENNEL_ID | Kennel identifier | kennel-01 |
+| MQTT_HOST | Local MQTT broker | localhost |
+| MQTT_PORT | MQTT port | 1883 |
+| LOCAL_BACKEND_URL | Local backend URL | http://localhost:3000 |
+| CLOUD_BACKEND_URL | Cloud backend URL | - |
+| API_KEY | Backend API key | smart-pet-api-key-2026 |
+| SQLITE_PATH | Database path | ./data/gateway.db |
+| SYNC_INTERVAL | Sync interval (ms) | 30000 |
 
 ## Quick Start
 
@@ -51,32 +95,12 @@ npm run dev
 docker-compose up -d
 ```
 
-## Configuration
+## Offline Mode
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| GATEWAY_ID | Unique gateway ID | auto-generated |
-| KENNEL_ID | Kennel identifier | kennel-01 |
-| MQTT_HOST | Local MQTT broker | localhost |
-| MQTT_PORT | MQTT port | 1883 |
-| API_URL | Backend API URL | http://localhost:3000 |
-| API_KEY | Backend API key | smart-pet-api-key-2026 |
-| SQLITE_PATH | Database path | ./data/gateway.db |
-| SYNC_INTERVAL | Sync interval (ms) | 30000 |
-
-## MQTT Topics
-
-### Subscribe (from devices)
-```
-kennel/{kennelId}/{deviceType}/{deviceId}/status
-kennel/{kennelId}/{deviceType}/{deviceId}/event
-kennel/{kennelId}/{deviceType}/{deviceId}/heartbeat
-```
-
-### Publish (to devices)
-```
-kennel/{kennelId}/{deviceType}/{deviceId}/command
-```
+When internet is unavailable:
+1. Events are stored in SQLite
+2. Commands are queued
+3. When connection restored, automatically syncs
 
 ## API Endpoints (local)
 
@@ -88,12 +112,24 @@ kennel/{kennelId}/{deviceType}/{deviceId}/command
 | GET | /events | Get events |
 | POST | /commands | Send command |
 
-## Offline Mode
+## Integration
 
-When internet is unavailable:
-1. Events are stored in SQLite
-2. Commands are queued
-3. When connection restored, automatically syncs
+The edge gateway communicates with:
+- **Local MQTT Broker**: Receives device events
+- **Backend API**: Syncs events via `POST /api/devices/ingest`
+
+## File Structure
+
+```
+src/
+├── mqtt/          # MQTT client
+├── devices/       # Device management
+├── storage/      # SQLite storage
+├── sync/         # Backend sync service
+├── api/          # Local API
+├── config/       # Configuration
+└── index.ts      # Entry point
+```
 
 ## License
 
