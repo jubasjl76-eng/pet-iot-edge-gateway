@@ -7,6 +7,7 @@ import mqtt, { MqttClient, IClientOptions } from 'mqtt';
 import { EventEmitter } from 'events';
 import { config } from '../config/index.js';
 import { storage } from '../storage/index.js';
+import { parseTopic, buildTopic, buildCommand, deliveryFor, INBOUND_STATE_LEAVES } from '../protocol.js';
 
 export interface DeviceMessage {
   deviceId: string;
@@ -108,48 +109,92 @@ export class MQTTGateway extends EventEmitter {
   }
 
   /**
-   * Handle incoming MQTT messages
+   * Handle incoming MQTT messages on the canonical v2 scheme
+   *   kennel/{kennelId}/{deviceType}/{deviceId}/{leaf}
+   * leaf ∈ status | event | ack | telemetry | location | presence | <metric> | heartbeat(legacy)
    */
   private handleMessage(topic: string, message: Buffer): void {
+    let payload: any;
     try {
-      const payload = JSON.parse(message.toString());
-      const topicParts = topic.split('/');
-      
-      // Topic format: kennel/{kennelId}/{deviceType}/{deviceId}/{type}
-      const [, , deviceType, deviceId, type] = topicParts;
-      
-      console.log(`[MQTT] Message on ${topic}:`, payload);
-      
-      // Store device info
-      storage.registerDevice({
-        deviceId,
-        deviceType,
-        name: payload.name || deviceId,
-        location: payload.location,
-        lastSeen: new Date(),
-        online: true,
-      });
-
-      // Emit based on message type
-      if (type === 'status' || type === 'event') {
-        const event = storage.storeEvent({
-          deviceId,
-          eventType: payload.eventType || payload.type || 'unknown',
-          value: payload.value || payload,
-          unit: payload.unit,
-          timestamp: new Date(),
-        });
-        this.emit('deviceEvent', event);
-      } else if (type === 'heartbeat') {
-        storage.updateDeviceStatus(deviceId, true);
-        this.emit('heartbeat', { deviceId, timestamp: payload.timestamp });
-      } else if (type === 'response') {
-        this.emit('commandResponse', { deviceId, ...payload });
-      }
-      
-    } catch (error) {
-      console.error('[MQTT] Failed to parse message:', error);
+      payload = JSON.parse(message.toString());
+    } catch {
+      console.error('[MQTT] non-JSON payload on', topic);
+      return;
     }
+
+    const parts = parseTopic(topic);
+    if (!parts) {
+      // tolerate the legacy 'heartbeat' leaf during migration
+      const legacy = topic.split('/');
+      if (legacy.length === 5 && legacy[4] === 'heartbeat') {
+        storage.updateDeviceStatus(legacy[3], true);
+        this.emit('heartbeat', { deviceId: legacy[3], timestamp: payload?.timestamp });
+      }
+      return;
+    }
+    const { deviceType, deviceId, leaf } = parts;
+
+    storage.registerDevice({
+      deviceId,
+      deviceType,
+      name: payload.name || deviceId,
+      location: payload.location,
+      lastSeen: new Date(),
+      online: true,
+    });
+
+    if (leaf === 'ack') {
+      // close the loop on a LAN-queued command
+      if (payload.ackId) {
+        storage.resolveLocalCommandByCommandId(payload.ackId, payload.result || 'ok');
+      }
+      this.emit('commandResponse', { deviceId, ...payload });
+      return;
+    }
+
+    if (leaf === 'status') {
+      storage.updateDeviceStatus(deviceId, (payload.status ?? 'online') !== 'offline');
+    }
+
+    // Everything that isn't a command or ack is device-produced state/telemetry
+    // → into the offline queue for the cloud.
+    if (leaf !== 'command') {
+      const event = storage.storeEvent({
+        deviceId,
+        eventType: leaf === 'event' ? (payload.event || 'event') : leaf,
+        value: payload.value ?? payload.metrics ?? payload,
+        unit: payload.unit,
+        timestamp: new Date(),
+      });
+      this.emit('deviceEvent', event);
+    }
+  }
+
+  /** Publish a v2 command with a generated id. Returns the id, or null if not connected. */
+  publishCommandWithId(
+    deviceType: string,
+    deviceId: string,
+    command: string,
+    params: Record<string, unknown> = {}
+  ): string | null {
+    if (!this.client || !this.client.connected) return null;
+    const body = buildCommand(config.kennelId, deviceId, command, params);
+    const topic = buildTopic(config.kennelId, deviceType, deviceId, 'command');
+    const { qos, retain } = deliveryFor('command');
+    this.client.publish(topic, JSON.stringify(body), { qos, retain });
+    storage.storeCommand({ deviceId, command, params, status: 'sent', createdAt: new Date() });
+    return body.id;
+  }
+
+  /** Fire-and-track a command (used by the schedule runner). Returns success. */
+  sendDeviceCommand(
+    deviceType: string,
+    deviceId: string,
+    command: string,
+    params: Record<string, unknown> = {},
+    _source = 'gateway'
+  ): boolean {
+    return this.publishCommandWithId(deviceType, deviceId, command, params) !== null;
   }
 
   /**

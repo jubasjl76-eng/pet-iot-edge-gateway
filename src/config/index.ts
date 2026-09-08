@@ -18,13 +18,29 @@ export interface Config {
   
   // SQLite
   sqlitePath: string;
-  
+
   // Sync
   syncInterval: number;
   offlineQueueLimit: number;
-  
+
   // Heartbeat
   heartbeatInterval: number;
+
+  // Pet Hub: local HTTP API (health, devices, events, schedules, commands)
+  httpPort: number;
+
+  // Pet Hub: local schedule runner — the hub fires feed/dispense on the LAN
+  // clock regardless of cloud connectivity. 0 disables.
+  scheduleTickInterval: number;
+
+  // Optional cloud MQTT bridge: republish local kennel/# to a cloud broker.
+  cloudMqttUrl?: string;
+  cloudMqttUsername?: string;
+  cloudMqttPassword?: string;
+
+  // Legacy HTTP sync to /api/iot/* (kept for back-compat; off by default now
+  // that the cloud consumes MQTT directly).
+  httpSyncEnabled: boolean;
 }
 
 function resolveBackendUrl(): string {
@@ -56,6 +72,15 @@ export const config: Config = {
   
   syncInterval: parseInt(process.env.SYNC_INTERVAL || '30000'),
   offlineQueueLimit: parseInt(process.env.OFFLINE_QUEUE_LIMIT || '1000'),
-  
+
   heartbeatInterval: parseInt(process.env.HEARTBEAT_INTERVAL || '60000'),
+
+  httpPort: parseInt(process.env.HTTP_PORT || '3004'),
+  scheduleTickInterval: parseInt(process.env.SCHEDULE_TICK_INTERVAL || '30000'),
+
+  cloudMqttUrl: process.env.CLOUD_MQTT_URL,
+  cloudMqttUsername: process.env.CLOUD_MQTT_USERNAME,
+  cloudMqttPassword: process.env.CLOUD_MQTT_PASSWORD,
+
+  httpSyncEnabled: process.env.HTTP_SYNC_ENABLED === 'true',
 };
