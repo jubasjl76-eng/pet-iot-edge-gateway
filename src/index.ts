@@ -7,6 +7,9 @@ import { config } from './config/index.js';
 import { mqttGateway } from './mqtt/index.js';
 import { syncService } from './sync/index.js';
 import { storage } from './storage/index.js';
+import { startHttpServer } from './http/index.js';
+import { scheduleRunner } from './schedules/index.js';
+import { cloudBridge } from './bridge/index.js';
 
 async function main() {
   console.log(`
@@ -25,17 +28,29 @@ async function main() {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
+  // Local HTTP API (LAN clients reach devices even with no internet)
+  startHttpServer();
+
   try {
     // Connect to local MQTT broker
     await mqttGateway.connect();
     console.log('[Gateway] MQTT connected');
 
-    // Register gateway with backend
-    await syncService.registerGateway();
+    // Local schedule runner — feeding/watering runs on the LAN clock
+    scheduleRunner.start();
 
-    // Start sync service
-    syncService.start();
-    console.log('[Gateway] Sync service started');
+    // Optional cloud MQTT bridge
+    cloudBridge.start();
+
+    // Legacy HTTP sync to /api/iot/* — off unless HTTP_SYNC_ENABLED=true
+    // (the cloud now consumes MQTT directly).
+    if (config.httpSyncEnabled) {
+      await syncService.registerGateway();
+      syncService.start();
+      console.log('[Gateway] HTTP sync service started (legacy)');
+    } else {
+      console.log('[Gateway] HTTP sync disabled — cloud consumes MQTT (set HTTP_SYNC_ENABLED=true to re-enable)');
+    }
 
     // Listen for device events
     mqttGateway.on('deviceEvent', (event) => {
@@ -58,11 +73,13 @@ async function main() {
 
 function shutdown() {
   console.log('\n[Gateway] Shutting down...');
-  
+
+  scheduleRunner.stop();
+  cloudBridge.stop();
   syncService.stop();
   mqttGateway.disconnect();
   storage.close();
-  
+
   console.log('[Gateway] Goodbye!');
   process.exit(0);
 }

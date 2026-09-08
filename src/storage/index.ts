@@ -4,8 +4,11 @@
  */
 
 import Database from 'better-sqlite3';
+import { mkdirSync } from 'fs';
+import { dirname } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config/index.js';
+import type { LocalSchedule } from '../schedules/schedule-core.js';
 
 export interface DeviceEvent {
   id: string;
@@ -40,11 +43,11 @@ class Storage {
   private db: Database.Database;
 
   constructor(dbPath: string) {
-    // Ensure directory exists
-    const path = dbPath.replace(/\/[^/]+$/, '');
-    require('fs').mkdirSync(path, { recursive: true });
-    
+    if (dbPath !== ':memory:') {
+      mkdirSync(dirname(dbPath), { recursive: true });
+    }
     this.db = new Database(dbPath);
+    this.db.pragma('journal_mode = WAL');
     this.initialize();
   }
 
@@ -96,7 +99,133 @@ class Storage {
       )
     `);
 
+    // Local schedules — the hub fires these on the LAN clock, cloud or not.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS schedules (
+        id TEXT PRIMARY KEY,
+        deviceId TEXT NOT NULL,
+        deviceType TEXT NOT NULL,
+        time TEXT NOT NULL,
+        amount REAL NOT NULL DEFAULT 0,
+        enabled INTEGER DEFAULT 1,
+        daysOfWeek TEXT,
+        lastFiredAt INTEGER
+      )
+    `);
+
+    // Local command queue — LAN clients (app/dashboard) enqueue; the hub delivers
+    // to the device over MQTT even with no internet.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS local_commands (
+        id TEXT PRIMARY KEY,
+        deviceId TEXT NOT NULL,
+        deviceType TEXT NOT NULL,
+        command TEXT NOT NULL,
+        params TEXT,
+        commandId TEXT,
+        status TEXT DEFAULT 'pending',
+        source TEXT DEFAULT 'lan',
+        createdAt TEXT NOT NULL,
+        deliveredAt TEXT,
+        ackAt TEXT,
+        ackResult TEXT
+      )
+    `);
+
     console.log('[Storage] SQLite initialized');
+  }
+
+  // ============== SCHEDULES ==============
+
+  private rowToSchedule(row: any): LocalSchedule {
+    return {
+      id: row.id,
+      deviceId: row.deviceId,
+      deviceType: row.deviceType,
+      time: row.time,
+      amount: row.amount,
+      enabled: row.enabled === 1,
+      daysOfWeek: row.daysOfWeek ? JSON.parse(row.daysOfWeek) : undefined,
+      lastFiredAt: row.lastFiredAt ?? null,
+    };
+  }
+
+  listSchedules(deviceId?: string): LocalSchedule[] {
+    const rows = deviceId
+      ? this.db.prepare('SELECT * FROM schedules WHERE deviceId = ?').all(deviceId)
+      : this.db.prepare('SELECT * FROM schedules').all();
+    return (rows as any[]).map((r) => this.rowToSchedule(r));
+  }
+
+  upsertSchedule(s: Omit<LocalSchedule, 'id'> & { id?: string }): LocalSchedule {
+    const id = s.id ?? uuidv4();
+    this.db.prepare(`
+      INSERT INTO schedules (id, deviceId, deviceType, time, amount, enabled, daysOfWeek, lastFiredAt)
+      VALUES (@id, @deviceId, @deviceType, @time, @amount, @enabled, @daysOfWeek, @lastFiredAt)
+      ON CONFLICT(id) DO UPDATE SET
+        deviceId=excluded.deviceId, deviceType=excluded.deviceType, time=excluded.time,
+        amount=excluded.amount, enabled=excluded.enabled, daysOfWeek=excluded.daysOfWeek
+    `).run({
+      id,
+      deviceId: s.deviceId,
+      deviceType: s.deviceType,
+      time: s.time,
+      amount: s.amount,
+      enabled: s.enabled ? 1 : 0,
+      daysOfWeek: s.daysOfWeek ? JSON.stringify(s.daysOfWeek) : null,
+      lastFiredAt: s.lastFiredAt ?? null,
+    });
+    return this.rowToSchedule(this.db.prepare('SELECT * FROM schedules WHERE id = ?').get(id));
+  }
+
+  deleteSchedule(id: string): boolean {
+    return this.db.prepare('DELETE FROM schedules WHERE id = ?').run(id).changes > 0;
+  }
+
+  markScheduleFired(id: string, whenMs: number): void {
+    this.db.prepare('UPDATE schedules SET lastFiredAt = ? WHERE id = ?').run(whenMs, id);
+  }
+
+  // ============== LOCAL COMMAND QUEUE ==============
+
+  enqueueLocalCommand(cmd: {
+    deviceId: string; deviceType: string; command: string;
+    params?: Record<string, unknown>; source?: string;
+  }): { id: string } {
+    const id = uuidv4();
+    this.db.prepare(`
+      INSERT INTO local_commands (id, deviceId, deviceType, command, params, status, source, createdAt)
+      VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+    `).run(id, cmd.deviceId, cmd.deviceType, cmd.command,
+           JSON.stringify(cmd.params ?? {}), cmd.source ?? 'lan', new Date().toISOString());
+    return { id };
+  }
+
+  getPendingLocalCommands(): Array<{
+    id: string; deviceId: string; deviceType: string; command: string; params: Record<string, unknown>;
+  }> {
+    const rows = this.db.prepare(
+      `SELECT * FROM local_commands WHERE status = 'pending' ORDER BY createdAt ASC`
+    ).all() as any[];
+    return rows.map((r) => ({ ...r, params: JSON.parse(r.params || '{}') }));
+  }
+
+  markLocalCommandDelivered(id: string, commandId: string): void {
+    this.db.prepare(
+      `UPDATE local_commands SET status='delivered', commandId=?, deliveredAt=? WHERE id=?`
+    ).run(commandId, new Date().toISOString(), id);
+  }
+
+  resolveLocalCommandByCommandId(commandId: string, result: string): void {
+    this.db.prepare(
+      `UPDATE local_commands SET status='acked', ackAt=?, ackResult=? WHERE commandId=?`
+    ).run(new Date().toISOString(), result, commandId);
+  }
+
+  recentLocalCommands(limit = 50): unknown[] {
+    return this.db.prepare(
+      `SELECT * FROM local_commands ORDER BY createdAt DESC LIMIT ?`
+    ).all(limit);
   }
 
   // ============== DEVICES ==============
