@@ -7,7 +7,7 @@ import mqtt, { MqttClient, IClientOptions } from 'mqtt';
 import { EventEmitter } from 'events';
 import { config } from '../config/index.js';
 import { storage } from '../storage/index.js';
-import { parseTopic, buildTopic, buildCommand, deliveryFor, INBOUND_STATE_LEAVES } from '../protocol.js';
+import { parseTopic, buildTopic, buildCommand, deliveryFor, INBOUND_STATE_LEAVES, type DeviceType } from '../protocol.js';
 
 export interface DeviceMessage {
   deviceId: string;
@@ -179,7 +179,9 @@ export class MQTTGateway extends EventEmitter {
   ): string | null {
     if (!this.client || !this.client.connected) return null;
     const body = buildCommand(config.kennelId, deviceId, command, params);
-    const topic = buildTopic(config.kennelId, deviceType, deviceId, 'command');
+    // deviceType is a free-form string from SQLite; buildTopic validates the
+    // segment at runtime and throws on anything malformed.
+    const topic = buildTopic(config.kennelId, deviceType as DeviceType, deviceId, 'command');
     const { qos, retain } = deliveryFor('command');
     this.client.publish(topic, JSON.stringify(body), { qos, retain });
     storage.storeCommand({ deviceId, command, params, status: 'sent', createdAt: new Date() });
