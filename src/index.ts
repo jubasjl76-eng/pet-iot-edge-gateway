@@ -7,7 +7,7 @@ import { config } from './config/index.js';
 import { mqttGateway } from './mqtt/index.js';
 import { syncService } from './sync/index.js';
 import { storage } from './storage/index.js';
-import { startHttpServer } from './http/index.js';
+import { startHttpServer, stopHttpServer } from './http/index.js';
 import { scheduleRunner } from './schedules/index.js';
 import { cloudBridge } from './bridge/index.js';
 
@@ -71,16 +71,28 @@ async function main() {
   }
 }
 
-function shutdown() {
-  console.log('\n[Gateway] Shutting down...');
+let shuttingDown = false;
 
+async function shutdown(signal?: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n[Gateway] ${signal ?? 'shutdown'} — draining...`);
+
+  const guard = setTimeout(() => {
+    console.error('[Gateway] drain timed out, forcing exit');
+    process.exit(1);
+  }, 10_000);
+  guard.unref();
+
+  await stopHttpServer(); // stop new LAN requests, finish in-flight
   scheduleRunner.stop();
   cloudBridge.stop();
   syncService.stop();
   mqttGateway.disconnect();
   storage.close();
 
-  console.log('[Gateway] Goodbye!');
+  clearTimeout(guard);
+  console.log('[Gateway] stopped');
   process.exit(0);
 }
 

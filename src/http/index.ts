@@ -15,7 +15,7 @@
  *   POST /commands                       {deviceId,deviceType,command,params}  → queued + delivered
  *   GET  /commands                       recent queued commands + their acks
  */
-import { createServer, IncomingMessage, ServerResponse } from 'http';
+import { createServer, IncomingMessage, ServerResponse, Server } from 'http';
 import { config } from '../config/index.js';
 import { storage } from '../storage/index.js';
 import { mqttGateway } from '../mqtt/index.js';
@@ -42,7 +42,15 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const method = req.method || 'GET';
 
   if (path === '/health') {
+    // Liveness only — the process is up.
     return send(res, 200, { status: 'ok', service: 'edge-gateway', gatewayId: config.gatewayId, kennelId: config.kennelId, uptime: process.uptime() });
+  }
+
+  if (path === '/ready') {
+    // Readiness — safe to route traffic. 503 until MQTT is connected / while draining.
+    const mqtt = mqttGateway.isConnected();
+    const ok = mqtt && !shuttingDown;
+    return send(res, ok ? 200 : 503, { status: ok ? 'ready' : 'not-ready', mqtt, shuttingDown });
   }
 
   if (path === '/status' && method === 'GET') {
@@ -121,14 +129,26 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   send(res, 404, { error: 'not found' });
 }
 
+let httpServer: Server | undefined;
+let shuttingDown = false;
+
 export function startHttpServer(): void {
-  const server = createServer((req, res) => {
+  httpServer = createServer((req, res) => {
     route(req, res).catch((err) => {
       console.error('[HTTP] handler error', err);
       if (!res.headersSent) send(res, 500, { error: 'internal error' });
     });
   });
-  server.listen(config.httpPort, () => {
+  httpServer.listen(config.httpPort, () => {
     console.log(`[HTTP] Pet Hub API on http://0.0.0.0:${config.httpPort}`);
+  });
+}
+
+/** Mark not-ready and stop accepting new connections; resolves once in-flight drains. */
+export function stopHttpServer(): Promise<void> {
+  shuttingDown = true;
+  return new Promise((resolve) => {
+    if (!httpServer) return resolve();
+    httpServer.close(() => resolve());
   });
 }

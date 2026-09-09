@@ -1,86 +1,87 @@
-// Configuration
+/**
+ * Typed config contract (hardening Phase 12, A8).
+ *
+ * ONE zod schema over process.env via @jubasjl76-eng/shared; a missing/invalid
+ * var prints every problem and exits. The `config` object keeps its camelCase
+ * domain shape + resolved fields so nothing else in the gateway had to change.
+ */
+import { loadConfig, z, envInt, envPort, envBool } from '@jubasjl76-eng/shared';
+
+const schema = z.object({
+  // public / build-time
+  GATEWAY_ID: z.string().optional(),
+  KENNEL_ID: z.string().default('kennel-01'),
+  HTTP_PORT: envPort().default(3004),
+
+  // runtime non-secret
+  MQTT_HOST: z.string().default('localhost'),
+  MQTT_PORT: envPort().default(1883),
+  MQTT_USERNAME: z.string().optional(),
+  LOCAL_BACKEND_URL: z.string().url().optional(),
+  CLOUD_BACKEND_URL: z.string().url().optional(),
+  SQLITE_PATH: z.string().default('./data/gateway.db'),
+  SYNC_INTERVAL: envInt().default(30_000),
+  OFFLINE_QUEUE_LIMIT: envInt().default(1_000),
+  HEARTBEAT_INTERVAL: envInt().default(60_000),
+  SCHEDULE_TICK_INTERVAL: envInt().default(30_000),
+  CLOUD_MQTT_URL: z.string().optional(),
+  CLOUD_MQTT_USERNAME: z.string().optional(),
+  HTTP_SYNC_ENABLED: envBool().default(false),
+
+  // secret (AWS Secrets Manager at runtime; SOPS+age for git-committed non-prod)
+  MQTT_PASSWORD: z.string().optional(),
+  CLOUD_MQTT_PASSWORD: z.string().optional(),
+  API_KEY: z.string().default('smart-pet-api-key-2026'),
+});
+
+const env = loadConfig(schema, { name: 'edge-gateway' });
+
+function resolveBackendUrl(): string {
+  return env.LOCAL_BACKEND_URL || env.CLOUD_BACKEND_URL || 'http://localhost:3000';
+}
+
 export interface Config {
-  // Gateway
   gatewayId: string;
   kennelId: string;
-  
-  // MQTT
   mqttHost: string;
   mqttPort: number;
   mqttUsername?: string;
   mqttPassword?: string;
-  
-  // Backend URLs
   localBackendUrl?: string;
   cloudBackendUrl?: string;
-  apiUrl: string;  // Resolved URL (local or cloud)
+  apiUrl: string;
   apiKey: string;
-  
-  // SQLite
   sqlitePath: string;
-
-  // Sync
   syncInterval: number;
   offlineQueueLimit: number;
-
-  // Heartbeat
   heartbeatInterval: number;
-
-  // Pet Hub: local HTTP API (health, devices, events, schedules, commands)
   httpPort: number;
-
-  // Pet Hub: local schedule runner — the hub fires feed/dispense on the LAN
-  // clock regardless of cloud connectivity. 0 disables.
   scheduleTickInterval: number;
-
-  // Optional cloud MQTT bridge: republish local kennel/# to a cloud broker.
   cloudMqttUrl?: string;
   cloudMqttUsername?: string;
   cloudMqttPassword?: string;
-
-  // Legacy HTTP sync to /api/iot/* (kept for back-compat; off by default now
-  // that the cloud consumes MQTT directly).
   httpSyncEnabled: boolean;
 }
 
-function resolveBackendUrl(): string {
-  const localUrl = process.env.LOCAL_BACKEND_URL;
-  const cloudUrl = process.env.CLOUD_BACKEND_URL;
-  
-  // For now, default to local - can add auto-discovery later
-  if (localUrl) {
-    return localUrl;
-  }
-  return cloudUrl || 'http://localhost:3000';
-}
-
 export const config: Config = {
-  gatewayId: process.env.GATEWAY_ID || `gateway-${Math.random().toString(36).slice(2, 8)}`,
-  kennelId: process.env.KENNEL_ID || 'kennel-01',
-  
-  mqttHost: process.env.MQTT_HOST || 'localhost',
-  mqttPort: parseInt(process.env.MQTT_PORT || '1883'),
-  mqttUsername: process.env.MQTT_USERNAME,
-  mqttPassword: process.env.MQTT_PASSWORD,
-  
-  localBackendUrl: process.env.LOCAL_BACKEND_URL,
-  cloudBackendUrl: process.env.CLOUD_BACKEND_URL,
+  gatewayId: env.GATEWAY_ID || `gateway-${Math.random().toString(36).slice(2, 8)}`,
+  kennelId: env.KENNEL_ID,
+  mqttHost: env.MQTT_HOST,
+  mqttPort: env.MQTT_PORT,
+  mqttUsername: env.MQTT_USERNAME,
+  mqttPassword: env.MQTT_PASSWORD,
+  localBackendUrl: env.LOCAL_BACKEND_URL,
+  cloudBackendUrl: env.CLOUD_BACKEND_URL,
   apiUrl: resolveBackendUrl(),
-  apiKey: process.env.API_KEY || 'smart-pet-api-key-2026',
-  
-  sqlitePath: process.env.SQLITE_PATH || './data/gateway.db',
-  
-  syncInterval: parseInt(process.env.SYNC_INTERVAL || '30000'),
-  offlineQueueLimit: parseInt(process.env.OFFLINE_QUEUE_LIMIT || '1000'),
-
-  heartbeatInterval: parseInt(process.env.HEARTBEAT_INTERVAL || '60000'),
-
-  httpPort: parseInt(process.env.HTTP_PORT || '3004'),
-  scheduleTickInterval: parseInt(process.env.SCHEDULE_TICK_INTERVAL || '30000'),
-
-  cloudMqttUrl: process.env.CLOUD_MQTT_URL,
-  cloudMqttUsername: process.env.CLOUD_MQTT_USERNAME,
-  cloudMqttPassword: process.env.CLOUD_MQTT_PASSWORD,
-
-  httpSyncEnabled: process.env.HTTP_SYNC_ENABLED === 'true',
+  apiKey: env.API_KEY,
+  sqlitePath: env.SQLITE_PATH,
+  syncInterval: env.SYNC_INTERVAL,
+  offlineQueueLimit: env.OFFLINE_QUEUE_LIMIT,
+  heartbeatInterval: env.HEARTBEAT_INTERVAL,
+  httpPort: env.HTTP_PORT,
+  scheduleTickInterval: env.SCHEDULE_TICK_INTERVAL,
+  cloudMqttUrl: env.CLOUD_MQTT_URL,
+  cloudMqttUsername: env.CLOUD_MQTT_USERNAME,
+  cloudMqttPassword: env.CLOUD_MQTT_PASSWORD,
+  httpSyncEnabled: env.HTTP_SYNC_ENABLED,
 };
