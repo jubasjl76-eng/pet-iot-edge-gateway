@@ -3,6 +3,8 @@
  * Main entry point
  */
 
+import './instrument.js'; // Sentry — must be the very first import
+import * as Sentry from '@sentry/node';
 import { config } from './config/index.js';
 import { mqttGateway } from './mqtt/index.js';
 import { syncService } from './sync/index.js';
@@ -67,6 +69,8 @@ async function main() {
 
   } catch (error) {
     console.error('[Gateway] Failed to start:', error);
+    Sentry.captureException(error);
+    await Sentry.flush(2000).catch(() => {});
     process.exit(1);
   }
 }
