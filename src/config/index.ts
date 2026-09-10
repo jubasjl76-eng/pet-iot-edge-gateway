@@ -35,6 +35,9 @@ const schema = z.object({
   SENTRY_RELEASE: z.string().optional(),
   SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).optional(),
 
+  // observability (Phase 16) — /metrics is open unless this bearer token is set.
+  METRICS_TOKEN: z.string().optional(),
+
   // secret (AWS Secrets Manager at runtime; SOPS+age for git-committed non-prod)
   MQTT_PASSWORD: z.string().optional(),
   CLOUD_MQTT_PASSWORD: z.string().optional(),
