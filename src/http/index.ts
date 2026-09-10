@@ -16,6 +16,7 @@
  *   GET  /commands                       recent queued commands + their acks
  */
 import { createServer, IncomingMessage, ServerResponse, Server } from 'http';
+import * as Sentry from '@sentry/node';
 import { config } from '../config/index.js';
 import { storage } from '../storage/index.js';
 import { mqttGateway } from '../mqtt/index.js';
@@ -136,6 +137,7 @@ export function startHttpServer(): void {
   httpServer = createServer((req, res) => {
     route(req, res).catch((err) => {
       console.error('[HTTP] handler error', err);
+      Sentry.captureException(err, { tags: { path: req.url, method: req.method } });
       if (!res.headersSent) send(res, 500, { error: 'internal error' });
     });
   });
