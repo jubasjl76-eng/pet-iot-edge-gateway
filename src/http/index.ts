@@ -22,6 +22,7 @@ import { storage } from '../storage/index.js';
 import { mqttGateway } from '../mqtt/index.js';
 import { scheduleRunner } from '../schedules/index.js';
 import { parseHhMm } from '../schedules/schedule-core.js';
+import { registry, httpDuration, metricsAuthorized } from '../metrics.js';
 
 function send(res: ServerResponse, code: number, body: unknown): void {
   const s = JSON.stringify(body);
@@ -52,6 +53,17 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const mqtt = mqttGateway.isConnected();
     const ok = mqtt && !shuttingDown;
     return send(res, ok ? 200 : 503, { status: ok ? 'ready' : 'not-ready', mqtt, shuttingDown });
+  }
+
+  if (path === '/metrics') {
+    if (!metricsAuthorized(req.headers.authorization)) {
+      res.writeHead(401).end();
+      return;
+    }
+    const body = await registry.metrics();
+    res.writeHead(200, { 'content-type': registry.contentType });
+    res.end(body);
+    return;
   }
 
   if (path === '/status' && method === 'GET') {
@@ -135,6 +147,10 @@ let shuttingDown = false;
 
 export function startHttpServer(): void {
   httpServer = createServer((req, res) => {
+    const path = (req.url || '/').split('?')[0].replace(/\/+$/, '') || '/';
+    const routeLabel = path.replace(/^\/schedules\/[^/]+$/, '/schedules/:id');
+    const end = path === '/metrics' ? null : httpDuration.startTimer();
+    res.on('finish', () => end?.({ method: req.method || 'GET', route: routeLabel, status: String(res.statusCode) }));
     route(req, res).catch((err) => {
       console.error('[HTTP] handler error', err);
       Sentry.captureException(err, { tags: { path: req.url, method: req.method } });
