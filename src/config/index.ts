@@ -37,6 +37,7 @@ const schema = z.object({
 
   // observability (Phase 16) — /metrics is open unless this bearer token is set.
   METRICS_TOKEN: z.string().optional(),
+  LOG_LEVEL: z.enum(['trace','debug','info','warn','error','fatal','silent']).optional(),
 
   // secret (AWS Secrets Manager at runtime; SOPS+age for git-committed non-prod)
   MQTT_PASSWORD: z.string().optional(),
