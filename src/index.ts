@@ -12,19 +12,13 @@ import { storage } from './storage/index.js';
 import { startHttpServer, stopHttpServer } from './http/index.js';
 import { scheduleRunner } from './schedules/index.js';
 import { cloudBridge } from './bridge/index.js';
+import { log } from './log.js';
 
 async function main() {
-  console.log(`
-╔═══════════════════════════════════════════════════════════╗
-║         🐾 Pet IoT Edge Gateway v1.0.0 🐾             ║
-╠═══════════════════════════════════════════════════════════╣
-║  Gateway ID: ${config.gatewayId.padEnd(39)}║
-║  Kennel ID: ${config.kennelId.padEnd(39)}║
-║  MQTT:      ${`${config.mqttHost}:${config.mqttPort}`.padEnd(39)}║
-║  API:       ${config.apiUrl.padEnd(39)}║
-║  SQLite:    ${config.sqlitePath.padEnd(39)}║
-╚═══════════════════════════════════════════════════════════╝
-  `);
+  log.info(
+    { gatewayId: config.gatewayId, kennelId: config.kennelId, mqtt: `${config.mqttHost}:${config.mqttPort}`, api: config.apiUrl },
+    'edge gateway starting',
+  );
 
   // Handle graceful shutdown
   process.on('SIGINT', shutdown);
@@ -36,7 +30,7 @@ async function main() {
   try {
     // Connect to local MQTT broker
     await mqttGateway.connect();
-    console.log('[Gateway] MQTT connected');
+    log.info('MQTT connected');
 
     // Local schedule runner — feeding/watering runs on the LAN clock
     scheduleRunner.start();
@@ -49,26 +43,24 @@ async function main() {
     if (config.httpSyncEnabled) {
       await syncService.registerGateway();
       syncService.start();
-      console.log('[Gateway] HTTP sync service started (legacy)');
+      log.info('legacy HTTP sync started');
     } else {
-      console.log('[Gateway] HTTP sync disabled — cloud consumes MQTT (set HTTP_SYNC_ENABLED=true to re-enable)');
+      log.info('HTTP sync disabled — cloud consumes MQTT');
     }
 
     // Listen for device events
     mqttGateway.on('deviceEvent', (event) => {
-      console.log(`[Gateway] Device event: ${event.deviceId} - ${event.eventType}`);
+      log.debug({ deviceId: event.deviceId, eventType: event.eventType }, 'device event');
     });
 
     mqttGateway.on('heartbeat', (data) => {
-      console.log(`[Gateway] Heartbeat from: ${data.deviceId}`);
+      log.debug({ deviceId: data.deviceId }, 'heartbeat');
     });
 
-    console.log('[Gateway] =========================================');
-    console.log('[Gateway] Gateway is running!');
-    console.log('[Gateway] =========================================');
+    log.info('gateway running');
 
   } catch (error) {
-    console.error('[Gateway] Failed to start:', error);
+    log.error({ err: error }, 'failed to start');
     Sentry.captureException(error);
     await Sentry.flush(2000).catch(() => {});
     process.exit(1);
@@ -80,10 +72,10 @@ let shuttingDown = false;
 async function shutdown(signal?: string) {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`\n[Gateway] ${signal ?? 'shutdown'} — draining...`);
+  log.info({ signal: signal ?? 'shutdown' }, 'draining');
 
   const guard = setTimeout(() => {
-    console.error('[Gateway] drain timed out, forcing exit');
+    log.error('drain timed out, forcing exit');
     process.exit(1);
   }, 10_000);
   guard.unref();
@@ -96,7 +88,7 @@ async function shutdown(signal?: string) {
   storage.close();
 
   clearTimeout(guard);
-  console.log('[Gateway] stopped');
+  log.info('stopped');
   process.exit(0);
 }
 

@@ -23,6 +23,9 @@ import { mqttGateway } from '../mqtt/index.js';
 import { scheduleRunner } from '../schedules/index.js';
 import { parseHhMm } from '../schedules/schedule-core.js';
 import { registry, httpDuration, metricsAuthorized } from '../metrics.js';
+import { log } from '../log.js';
+
+const hlog = log.child({ mod: 'http' });
 
 function send(res: ServerResponse, code: number, body: unknown): void {
   const s = JSON.stringify(body);
@@ -152,13 +155,13 @@ export function startHttpServer(): void {
     const end = path === '/metrics' ? null : httpDuration.startTimer();
     res.on('finish', () => end?.({ method: req.method || 'GET', route: routeLabel, status: String(res.statusCode) }));
     route(req, res).catch((err) => {
-      console.error('[HTTP] handler error', err);
+      hlog.error({ err, url: req.url }, 'handler error');
       Sentry.captureException(err, { tags: { path: req.url, method: req.method } });
       if (!res.headersSent) send(res, 500, { error: 'internal error' });
     });
   });
   httpServer.listen(config.httpPort, () => {
-    console.log(`[HTTP] Pet Hub API on http://0.0.0.0:${config.httpPort}`);
+    hlog.info({ port: config.httpPort }, 'Pet Hub API listening');
   });
 }
 

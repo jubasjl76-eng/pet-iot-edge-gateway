@@ -8,6 +8,9 @@ import { EventEmitter } from 'events';
 import { config } from '../config/index.js';
 import { storage } from '../storage/index.js';
 import { parseTopic, buildTopic, buildCommand, deliveryFor, INBOUND_STATE_LEAVES, type DeviceType } from '../protocol.js';
+import { log } from '../log.js';
+
+const mlog = log.child({ mod: 'mqtt' });
 
 export interface DeviceMessage {
   deviceId: string;
@@ -52,12 +55,12 @@ export class MQTTGateway extends EventEmitter {
         options.password = config.mqttPassword;
       }
 
-      console.log(`[MQTT] Connecting to ${url}...`);
+      mlog.info({ url }, 'connecting');
       
       this.client = mqtt.connect(url, options);
 
       this.client.on('connect', () => {
-        console.log('[MQTT] Connected successfully');
+        mlog.info('connected');
         this.reconnectAttempts = 0;
         
         // Subscribe to all device topics
@@ -66,22 +69,22 @@ export class MQTTGateway extends EventEmitter {
       });
 
       this.client.on('error', (error) => {
-        console.error('[MQTT] Connection error:', error.message);
+        mlog.error({ err: error }, 'error');
         reject(error);
       });
 
       this.client.on('reconnect', () => {
         this.reconnectAttempts++;
-        console.log(`[MQTT] Reconnecting... (attempt ${this.reconnectAttempts})`);
+        mlog.warn({ attempt: this.reconnectAttempts }, 'reconnecting');
         
         if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-          console.error('[MQTT] Max reconnect attempts reached');
+          mlog.error('max reconnect attempts reached');
           this.client?.end();
         }
       });
 
       this.client.on('offline', () => {
-        console.log('[MQTT] Client offline');
+        mlog.warn('offline');
         storage.updateGatewayStatus(false);
       });
 
@@ -101,9 +104,9 @@ export class MQTTGateway extends EventEmitter {
     
     this.client.subscribe(baseTopic, { qos: 1 }, (err) => {
       if (err) {
-        console.error('[MQTT] Subscribe error:', err);
+        mlog.error({ err }, 'subscribe failed');
       } else {
-        console.log(`[MQTT] Subscribed to ${baseTopic}`);
+        mlog.debug({ topic: baseTopic }, 'subscribed');
       }
     });
   }
@@ -118,7 +121,7 @@ export class MQTTGateway extends EventEmitter {
     try {
       payload = JSON.parse(message.toString());
     } catch {
-      console.error('[MQTT] non-JSON payload on', topic);
+      mlog.warn({ topic }, 'non-JSON payload');
       return;
     }
 
@@ -204,7 +207,7 @@ export class MQTTGateway extends EventEmitter {
    */
   sendCommand(deviceType: string, deviceId: string, command: string, params?: any): void {
     if (!this.client || !this.client.connected) {
-      console.error('[MQTT] Client not connected');
+      mlog.warn('publish skipped — not connected');
       return;
     }
 
@@ -218,9 +221,9 @@ export class MQTTGateway extends EventEmitter {
 
     this.client.publish(topic, JSON.stringify(payload), { qos: 2 }, (err) => {
       if (err) {
-        console.error('[MQTT] Failed to send command:', err);
+        mlog.error({ err }, 'failed to send command');
       } else {
-        console.log(`[MQTT] Command sent to ${topic}:`, payload);
+        mlog.debug({ topic }, 'command sent');
         
         // Store command for tracking
         storage.storeCommand({
@@ -262,7 +265,7 @@ export class MQTTGateway extends EventEmitter {
     if (this.client) {
       this.client.end();
       this.client = null;
-      console.log('[MQTT] Disconnected');
+      mlog.info('disconnected');
     }
   }
 }
