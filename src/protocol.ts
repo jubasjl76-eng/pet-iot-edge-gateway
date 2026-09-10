@@ -7,6 +7,7 @@
  * part of the contract and stay here.
  */
 import { commandId } from '@jubasjl76-eng/mqtt-contract';
+import { propagation, context } from '@opentelemetry/api';
 
 export {
   DEVICE_TYPES,
@@ -17,14 +18,19 @@ export {
 } from '@jubasjl76-eng/mqtt-contract';
 export type { DeviceType, TopicParts, Qos } from '@jubasjl76-eng/mqtt-contract';
 
-/** Build a command payload with an id so acks can be correlated. */
+/**
+ * Build a command payload with an id so acks can be correlated, and stamp the
+ * active W3C Trace Context (traceparent/tracestate) so a gateway-originated
+ * command and its device ack stay on one trace (Phase 16). Both no-op when
+ * there is no active trace.
+ */
 export function buildCommand(
   kennelId: string,
   deviceId: string,
   command: string,
   params: Record<string, unknown> = {}
 ): { command: string; id: string; deviceId: string; kennelId: string; timestamp: number; params: Record<string, unknown> } {
-  return {
+  const payload = {
     command,
     id: commandId(),
     deviceId,
@@ -32,6 +38,8 @@ export function buildCommand(
     timestamp: Date.now(),
     params,
   };
+  propagation.inject(context.active(), payload);
+  return payload;
 }
 
 /** Leaves the gateway treats as "device produced telemetry/state" for the offline queue. */
